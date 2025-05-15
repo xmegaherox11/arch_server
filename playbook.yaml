@@ -8,7 +8,7 @@
     email: ""
     
     base_ip: "192.168.1"
-    gateway: "{{base_ip}}.1"
+    gateway_ip: "{{base_ip}}.1"
     server_ip: "{{base_ip}}.10"
     home_ip: "{{base_ip}}.0/24"
     dns_ip: "1.1.1.1"
@@ -251,8 +251,8 @@
         - "{{hdd_movie_path}}:/data/movies"
         - "{{hdd_anime_path}}:/data/anime"
         - "{{ssd_music_path}}:/data/music"
-        ports:
-         - 8989:8989
+      ports:
+         - 8999:8989
        env: "{{common_env}}"
        devices:
          - "/dev/dri:/dev/dri"
