@@ -94,14 +94,15 @@
       ansible.builtin.copy:
         dest: "/etc/systemd/network/20-static.network"
         content: |
+          [Match]
+          Name=enp3s0
+          
           [Network]
           DHCP=no
           Address={{ server_ip }}/24
           Gateway={{ gateway_ip }}
           DNS={{ dns_ip }}
-          
-          [DHCP]
-          UseDNS=false
+
         owner: root
         group: root
         mode: '0644'
@@ -171,6 +172,17 @@
             guest ok = no
             valid users = {{username}}
         marker: "# ANSIBLE MANAGED BLOCK - SAMBA CONFIGURATION"
+
+
+
+
+
+fix ssh
+
+sudo chsh -s /bin/bash {{username}}
+
+
+
 
   ########################################################################################################
 
