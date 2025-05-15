@@ -120,6 +120,9 @@
           - ansible
           - docker
           - docker-compose
+          - python
+          - python-requests
+          - cockpit
           - hdparm
           - samba
           - openssh
@@ -133,15 +136,6 @@
     - name: Set the system keyboard layout to German
       command:
         cmd: localectl set-keymap de
-
-    - name: Ensure Samba services are enabled and started
-      become: true
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: started
-        enabled: true
-      loop:
-        - smb
     
     - name: Create empty smb.conf if it does not exist
       become: true
@@ -177,20 +171,8 @@
             guest ok = no
             valid users = {{username}}
         marker: "# ANSIBLE MANAGED BLOCK - SAMBA CONFIGURATION"
-  
-    - name: Restart Samba service
-      ansible.builtin.service:
-        name: smbd
-        state: restarted
 
   ########################################################################################################
-
-    - name: Ensure Docker service is running and enabled
-      become: true
-      ansible.builtin.systemd:
-        name: docker
-        state: started
-        enabled: true
 
     - name: Installing Watchtower
       community.docker.docker_container:
