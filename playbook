@@ -1,0 +1,606 @@
+- name: Arch Linux Server
+  hosts: localhost
+  become: true
+  vars:
+    username: ""
+    password: ""
+    pia_username: ""
+    email: ""
+    
+    base_ip: "192.168.1"
+    gateway: "{{base_ip}}.1"
+    server_ip: "{{base_ip}}.10"
+    home_ip: "{{base_ip}}.0/24"
+    dns_ip: "1.1.1.1"
+    common_env:
+      TZ: "Europe/Berlin"
+      PUID: "1000"
+      PGID: "1000"
+
+    root_path: "/"
+    home_path: "/home/{{username}}/"
+    
+    nvme_home_path: "/{{home_path}}/nvme"
+    nvme_container_path: "/{{nvme_home_path}}/container"
+    nvme_share_path: "{{nvme_home_path}}/share"
+    
+    ssd_home_path: "{{home_path}}/ssd"
+    ssd_download_path: "{{ssd_home_path}}/download"
+    ssd_transcode_path: "{{ssd_home_path}}/transcode"
+    ssd_media_path: "{{ssd_home_path}}/media"
+    ssd_music_path: "{{ssd_media_path}}/music"
+
+    hdd_home_path: "{{home_path}}/hdd"
+    hdd_game_path: "{{hdd_home_path}}/game"
+    hdd_media_path: "{{hdd_home_path}}/media"
+    hdd_tv_path: "{{hdd_media_path}}/tv"
+    hdd_movie_path: "{{hdd_media_path}}/movie"
+    hdd_anime_path: "{{hdd_media_path}}/anime"
+
+    nas_home_path: "{{home_path}}/nas"
+    remote_home_path: "{{home_path}}/remote"
+
+  tasks:
+    - name: Update package databases and system
+      pacman:
+        update_cache: yes
+        upgrade: yes
+    
+    - name: Force refresh package databases
+      pacman:
+        update_cache: yes
+        force: yes
+
+    - name: Setting Up Environment
+      ansible.builtin.file:
+        path: "{{home_path}}/{{item}}"
+        state: directory
+      loop:
+       - nvme
+       - ssd
+       - hdd
+       - nas
+       - remote
+     
+    - name: Get Public Ip
+      uri:
+          url: https://api.ipify.org?format=json
+          method: Get
+      changed_when: false
+      register: public_ip
+      until: public_ip.status == 200
+      retries: 3
+      delay: 2
+
+    - name: Get a list of network configuration files
+      ansible.builtin.find:
+        paths: "/etc/systemd/network"
+        patterns: "*.network"
+      register: network_files
+
+    - name: Remove existing network files except 20-static.network
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ network_files.files }}"
+      when: item.path != '/etc/systemd/network/20-static.network'
+      
+    - name: Check if 20-static.network already exists
+      ansible.builtin.stat:
+        path: "/etc/systemd/network/20-static.network"
+      register: static_network_file
+      
+    - name: Create new static IP network configuration file
+      ansible.builtin.copy:
+        dest: "/etc/systemd/network/20-static.network"
+        content: |
+          [Network]
+          DHCP=no
+          Address={{ server_ip }}/24
+          Gateway={{ gateway_ip }}
+          DNS={{ dns_ip }}
+          
+          [DHCP]
+          UseDNS=false
+        owner: root
+        group: root
+        mode: '0644'
+      when: not static_network_file.stat.exists 
+      
+    - name: Restart systemd-networkd to apply the new IP configuration
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: restarted
+      when: not static_network_file.stat.exists 
+    
+    - name: Install Stuff
+      pacman:
+        name:
+          - git
+          - ansible
+          - docker
+          - docker-compose
+          - hdparm
+          - samba
+          - openssh
+          - rclone
+        state: present
+
+    - name: Set the system time zone to Berlin
+      command:
+        cmd: timedatectl set-timezone Europe/Berlin
+
+    - name: Set the system keyboard layout to German
+      command:
+        cmd: localectl set-keymap de
+
+    - name: Ensure Samba services are enabled and started
+      become: true
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - smb
+    
+    - name: Create empty smb.conf if it does not exist
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/samba/smb.conf
+        content: ""
+        owner: root
+        group: root
+        mode: '0644'
+        force: no
+
+    - name: Add system user for Samba
+      ansible.builtin.user:
+        name: "{{username}}"
+        state: present
+        shell: /sbin/nologin
+  
+    - name: Set Samba user password
+      ansible.builtin.shell: |
+        (echo "{{password}}"; echo "{{password}}") | smbpasswd -a -s "{{username}}"
+  
+    - name: Enable Samba user
+      ansible.builtin.command: smbpasswd -e "{{username}}"
+  
+    - name: Configure Samba shares
+      ansible.builtin.blockinfile:
+        path: /etc/samba/smb.conf
+        block: |
+          [root]
+            path = {{root_path}}
+            browsable = yes
+            writable = yes
+            guest ok = no
+            valid users = {{username}}
+        marker: "# ANSIBLE MANAGED BLOCK - SAMBA CONFIGURATION"
+  
+    - name: Restart Samba service
+      ansible.builtin.service:
+        name: smbd
+        state: restarted
+
+  ########################################################################################################
+
+    - name: Ensure Docker service is running and enabled
+      become: true
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Installing Watchtower
+      community.docker.docker_container:
+       name: watchtower
+       image: containrrr/watchtower
+       command: --schedule "0 0 4 * * *" --cleanup --remove-volumes --include-restarting --include-stopped --revive-stopped
+       volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - /etc/localtime:/etc/localtime:ro
+       restart_policy: always
+  
+    - name: Installing Portainer
+      community.docker.docker_container:
+       name: portainer
+       image: portainer/portainer-ce
+       ports:
+        - "9000:9000"
+        - "8002:8000"
+       volumes:
+        - "/var/run/docker.sock:/var/run/docker.sock"
+        - "{{nvme_container_path}}/portainer:/data"
+       restart_policy: always
+  
+    - name: Installing Homarr
+      community.docker.docker_container:
+       name: homarr
+       image: ghcr.io/ajnart/homarr:latest
+       volumes:
+        - "{{nvme_container_path}}/homarr/configs:/app/data/configs"
+        - "{{nvme_container_path}}/homarr/data:/data"
+        - "{{nvme_container_path}}/homarr/icons://app/public/icons"
+       ports:
+        - 7575:7575
+       env: "{{common_env}}"
+       restart_policy: always
+       
+    - name: Installing Dash
+      community.docker.docker_container:
+        name: dash
+        image: mauricenino/dashdot
+        privileged: "true"
+        volumes:
+          - "/:/mnt/host:ro"
+        ports:
+          - 980:3001
+        restart_policy: always
+  
+  ########################################################################################################
+  
+    - name: Installing Jelylfin
+      community.docker.docker_container:
+       name: jellyfin
+       network_mode: host
+       image: lscr.io/linuxserver/jellyfin
+       volumes:
+        - "{{nvme_container_path}}/plex:/config"
+        - "{{hdd_tv_path}}:/data/tv"
+        - "{{hdd_movie_path}}:/data/movies"
+        - "{{hdd_anime_path}}:/data/anime"
+        - "{{ssd_music_path}}:/data/music"
+        ports:
+         - 8989:8989
+       env: "{{common_env}}"
+       devices:
+         - "/dev/dri:/dev/dri"
+       restart_policy: always
+  
+    - name: Installing Sonarr
+      community.docker.docker_container:
+       name: sonarr
+       image: lscr.io/linuxserver/sonarr:latest
+       volumes:
+        - "{{nvme_container_path}}/sonarr:/config"
+        - "{{hdd_tv_path}}:/tv"
+        - "{{hdd_anime_path}}:/anime"
+        - "{{ssd_download_path}}:/downloads"
+       ports:
+         - 8989:8989
+       env: "{{common_env}}"
+       restart_policy: always
+  
+    - name: Installing Radarr
+      community.docker.docker_container:
+       name: radarr
+       image: lscr.io/linuxserver/radarr:latest
+       volumes:
+        - "{{nvme_container_path}}/radarr:/config"
+        - "{{hdd_movie_path}}:/movies"
+        - "{{hdd_anime_path}}:/anime"
+        - "{{ssd_download_path}}:/downloads"
+       ports:
+         - 7878:7878
+       env: "{{common_env}}"
+       restart_policy: always
+  
+    - name: Installing Deemix
+      community.docker.docker_container:
+       name: deemix
+       image: registry.gitlab.com/bockiii/deemix-docker
+       volumes:
+        - "{{nvme_container_path}}/deemix:/config"
+        - "{{ssd_music_path}}:/downloads"
+       ports:
+         - 6595:6595
+       env: "{{common_env}}"
+       env:
+        DEEMIX_SINGLE_USER: "true"
+        UMASK_SET: "022"
+       restart_policy: always
+  
+    - name: Installing Bazarr
+      community.docker.docker_container:
+       name: bazarr
+       image: lscr.io/linuxserver/bazarr:latest
+       volumes:
+        - "{{nvme_container_path}}/bazarr:/config"
+        - "{{hdd_tv_path}}:/tv"
+        - "{{hdd_movie_path}}:/movie"
+        - "{{hdd_anime_path}}:/anime"
+       ports:
+         - 6767:6767
+       env: "{{common_env}}"
+       restart_policy: always
+  
+    - name: Installing Prowlarr
+      community.docker.docker_container:
+       name: prowlarr
+       image: lscr.io/linuxserver/prowlarr:latest
+       volumes:
+        - "{{nvme_container_path}}/prowlarr:/config"
+       ports:
+        - 9696:9696
+       env: "{{common_env}}"
+       restart_policy: always
+  
+    - name: Installing Ombi
+      community.docker.docker_container:
+       name: ombi
+       image: lscr.io/linuxserver/ombi:latest
+       volumes:
+        - "{{nvme_container_path}}/ombi:/config"
+       ports:
+         - 3579:3579
+       env: "{{common_env}}"
+       restart_policy: always
+  
+  ########################################################################################################
+  
+    - name: Installing PIA Qbitorrent
+      community.docker.docker_container:
+        image: j4ym0/pia-qbittorrent
+        name: qbittorrent
+        capabilities: "NET_ADMIN"
+        privileged: true
+        env: "{{common_env}}"
+        env:
+          USER: "{{pia_username}}"
+          PASSWORD: "{{password}}"
+          REGION: "Netherlands"
+          WEBUI_PORT: "8889"
+          PORT_FORWARDING: "true"
+        volumes:
+         - "{{nvme_container_path}}/qbittorrent:/config"
+         - "{{ssd_download_path}}:/downloads"
+        ports:
+          - 8889:8889
+        restart_policy: always
+  
+    - name: Installing Homeassistant
+      community.docker.docker_container:
+        image: lscr.io/linuxserver/homeassistant:latest
+        name: homeassistant
+        privileged: "true"
+        network_mode: "host"
+        env: "{{common_env}}"
+        volumes:
+          - "/run/dbus:/run/dbus:ro"
+          - "{{nvme_container_path}}/homeassistant:/config"
+          - "{{nvme_container_path}}/homeassistant/.ssh:/root/.ssh"
+        restart_policy: always
+  
+    - name: Installing Nginx-Proxy-Manager
+      community.docker.docker_container:
+        image: docker.io/jc21/nginx-proxy-manager:latest
+        name: nginx-proxy-manager
+        env: "{{common_env}}"
+        volumes:
+          - "{{nvme_container_path}}/nginx-proxy-manager/data:/data"
+          - "{{nvme_container_path}}/nginx-proxy-manager/letsencrypt:/etc/letsencrypt"
+        ports:
+          - 8443:443
+          - 880:80
+          - 281:81
+        restart_policy: always
+  
+    - name: Installing Wireguard
+      community.docker.docker_container:
+       capabilities:
+        - "NET_ADMIN"
+        - "SYS_MODULE"
+       sysctls:
+        net.ipv4.conf.all.src_valid_mark: "1"
+        net.ipv4.ip_forward: "1"
+       image: ghcr.io/wg-easy/wg-easy
+       name: wireguard
+       env: "{{common_env}}"
+       env:
+        LANG: "de"
+        WG_HOST: "{{public_ip.json.ip}}"
+        PORT: "51821"
+        WG_PORT: "51820"
+       volumes:
+        - "{{nvme_container_path}}/wireguard:/etc/wireguard"
+       ports:
+        - 51820:51820/udp
+        - 51821:51821/tcp
+       restart_policy: always
+  
+    - name: Installing Minecraft
+      community.docker.docker_container:
+       name: minecraft
+       image: itzg/minecraft-server
+       tty: "true"
+       volumes:
+        - "{{nvme_container_path}}/minecraft:/data"
+       ports:
+        - 25565:25565
+       env: "{{common_env}}"
+       env:
+        EULA: "TRUE"
+        TYPE: "PAPER"
+        PAPER_CHANNEL: "experimental"
+        ONLINE_MODE: "false"
+        MEMORY: "4G"
+       restart_policy: always
+       
+    - name: Installing Palworld
+      community.docker.docker_container:
+        name: palworld
+        image: thijsvanloef/palworld-server-docker:latest
+        restart_policy: always
+        ports:
+          - "8211:8211/udp"
+          - "27015:27015/udp"
+          # - "8212:8212/tcp"  # Uncomment if REST_API_ENABLED is true
+        env: "{{common_env}}"
+        env:
+          PORT: "8211"
+          PLAYERS: "16"
+          SERVER_PASSWORD: "{{username}}"
+          MULTITHREADING: "true"
+          RCON_ENABLED: "true"
+          RCON_PORT: "25575"
+          ADMIN_PASSWORD: "{{password}}"
+          COMMUNITY: "false"
+          SERVER_NAME: "{{username}}"
+          SERVER_DESCRIPTION: "{{username}}s Palworld Server"
+          ALLOW_CONNECT_PLATFORM: "Steam"
+        volumes:
+          - "{{nvme_container_path}}/palworld:/palworld"
+  
+    - name: Installing Semaphore
+      community.docker.docker_container:
+       name: semaphore
+       privileged: true
+       ports:
+        - 3003:3000
+       image: ghcr.io/imagegenius/semaphore:latest
+       env: "{{common_env}}"
+       env:
+        SEMAPHORE_DB_DIALECT: "bolt"
+        SEMAPHORE_ADMIN_PASSWORD: "{{password}}"
+        SEMAPHORE_ADMIN_NAME: "{{username}}"
+        SEMAPHORE_ADMIN_EMAIL: "{{email}}"
+        SEMAPHORE_ADMIN: "{{username}}"
+       volumes:
+        - "{{nvme_container_path}}/semaphore:/config"
+       restart_policy: always
+  
+    - name: Install adguard
+      community.docker.docker_container:
+       name: adguardhome
+       image: adguard/adguardhome:latest
+       ports:
+         - "3000:3000"
+         - "54:53"
+         - "67:67/udp"
+       volumes:
+         - "{{nvme_container_path}}/adguardhome:/opt/adguardhome/conf"
+         - "{{nvme_container_path}}/adguardhome:/opt/adguardhome/work"
+       env: "{{common_env}}"
+       restart_policy: always
+  
+    - name: get sonarr api
+      ansible.builtin.command:
+       argv:
+         - "sed"
+         - "-nE"
+         - 's,.*<ApiKey>([A-Za-z0-9]+)</ApiKey>.*,\1,p'
+         - "{{nvme_container_path}}/sonarr/config.xml"
+      register: "sonarr_api"
+  
+    - name: get radarr api
+      ansible.builtin.command:
+       argv:
+        - "sed"
+        - "-nE"
+        - 's,.*<ApiKey>([A-Za-z0-9]+)</ApiKey>.*,\1,p'
+        - "{{nvme_container_path}}/radarr/config.xml"
+      register: "radarr_api"
+  
+    - name: Installing decluttarr
+      community.docker.docker_container:
+       image: ghcr.io/manimatter/decluttarr:latest
+       name: decluttarr
+       env: "{{common_env}}"
+       env:
+        LOG_LEVEL: "INFO"
+        REMOVE_TIMER: "10"
+        REMOVE_FAILED: "True"
+        REMOVE_FAILED_IMPORTS: "True"
+        REMOVE_METADATA_MISSING: "True"
+        REMOVE_MISSING_FILES: "True"
+        REMOVE_ORPHANS: "True"
+        REMOVE_SLOW: "True"
+        REMOVE_STALLED: "True"
+        REMOVE_UNMONITORED: "True"
+        RUN_PERIODIC_RESCANS: '
+           {
+             "SONARR": {"MISSING": true, "CUTOFF_UNMET": true, "MAX_CONCURRENT_SCANS": 3, "MIN_DAYS_BEFORE_RESCAN": 7},
+             "RADARR": {"MISSING": true, "CUTOFF_UNMET": true, "MAX_CONCURRENT_SCANS": 3, "MIN_DAYS_BEFORE_RESCAN": 7}
+           }'
+        PERMITTED_ATTEMPTS: "3"
+        NO_STALLED_REMOVAL_QBIT_TAG: "Don't Kill"
+        REMOVE_SLOW: "True"
+        MIN_DOWNLOAD_SPEED: "50"
+        FAILED_IMPORT_MESSAGE_PATTERNS: '
+           [
+            "Not a Custom Format upgrade for existing",
+             "Not an upgrade for existing"
+           ]'
+        SONARR_URL: "{{server_ip}}:8989"
+        SONARR_KEY: "{{sonarr_api.stdout}}"
+        RADARR_URL: "{{server_ip}}:7878"
+        RADARR_KEY: "{{radarr_api.stdout}}"
+        QBITTORRENT_URL: "{{server_ip}}:8889"
+        QBITTORRENT_USERNAME: "{{username}}"
+        QBITTORRENT_PASSWORD: "{{password}}"
+       restart_policy: always
+  
+    - name: Installing Unmanic
+      community.docker.docker_container:
+       name: unmanic
+       image: josh5/unmanic:latest
+       ports:
+        - 8888:8888
+       volumes:
+        - "{{nvme_container_path}}/unmanic:/config"
+        - "{{hdd_media_path}}:/library"
+        - "{{ssd_transcode_path}}:/tmp/unmanic"
+       devices:
+        - /dev/dri:/dev/dri
+       env: "{{common_env}}"
+       restart_policy: always
+  
+    - name: Installing Paperless
+      community.docker.docker_container:
+       image: lscr.io/linuxserver/paperless-ngx:latest
+       name: paperless-ngx
+       env: "{{common_env}}"
+       volumes:
+         - "{{nvme_container_path}}/paperless/config:/config"
+         - "{{nvme_container_path}}/paperless/data:/data"
+       ports:
+         - 8001:8000
+       restart_policy: always
+  
+    - name: Installing Nextcloud
+      community.docker.docker_container:
+       image: lscr.io/linuxserver/nextcloud:latest
+       name: nextcloud
+       env: "{{common_env}}"
+       volumes:
+         - "{{nvme_container_path}}/nextcloud/config:/config"
+         - "{{nvme_container_path}}/nextcloud/data:/data"
+       ports:
+         - 1443:443
+       restart_policy: always
+  
+    - name: Installing Vaultwarden
+      community.docker.docker_container:
+       image: vaultwarden/server:latest
+       name: vaultwarden
+       env: "{{common_env}}"
+       env:
+        ADMIN_TOKEN: "{{password}}"
+        WEBSOCKET_ENABLED: "true"
+       volumes:
+         - "{{nvme_container_path}}/vaultwarden:/data"
+       ports:
+         - 9445:80
+       restart_policy: always
+
+    - name: Updating Homeassistant Config File for Reverse Proxy
+      ansible.builtin.blockinfile:
+       path: "{{nvme_container_path}}/homeassistant/configuration.yaml"
+       block: |
+        http:
+          use_x_forwarded_for: true
+          trusted_proxies:
+            - {{home_ip}}
+            - {{public_ip.json.ip}}
+            - 172.17.0.0/24
