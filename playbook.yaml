@@ -130,7 +130,6 @@
           - qemu 
           - bridge-utils 
           - dnsmasq
-          - cockpit-docker
         state: present
 
     - name: Set the system time zone to Berlin
@@ -189,17 +188,17 @@
         name: "{{ username }}"
         shell: /bin/bash
         
-    - name: Ensure Services are enabled and started
-      become: true
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: started
-        enabled: true
-      loop:
-        - sshd
-        - cockpit.socket
-        - smb
-        - libvirtd
+    # - name: Ensure Services are enabled and started
+    #   become: true
+    #   ansible.builtin.systemd:
+    #     name: "{{ item }}"
+    #     state: started
+    #     enabled: true
+    #   loop:
+    #     - sshd
+    #     - cockpit.socket
+    #     - smb
+    #     - libvirtd
   ########################################################################################################
 
     - name: Installing Watchtower
