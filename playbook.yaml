@@ -255,7 +255,6 @@
     - name: Installing Jelylfin
       community.docker.docker_container:
        name: jellyfin
-       network_mode: host
        image: lscr.io/linuxserver/jellyfin
        volumes:
         - "{{nvme_container_path}}/plex:/config"
@@ -264,7 +263,7 @@
         - "{{hdd_anime_path}}:/data/anime"
         - "{{ssd_music_path}}:/data/music"
        ports:
-         - 8999:8989
+         - 8096:8096
        env: "{{common_env}}"
        devices:
          - "/dev/dri:/dev/dri"
