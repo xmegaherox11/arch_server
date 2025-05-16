@@ -173,16 +173,18 @@
             valid users = {{username}}
         marker: "# ANSIBLE MANAGED BLOCK - SAMBA CONFIGURATION"
 
+    - name: Ensure PasswordAuthentication is set to yes in sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication\s+'
+        line: 'PasswordAuthentication yes'
+        state: present
+        backup: true
 
-
-
-
-fix ssh
-
-sudo chsh -s /bin/bash {{username}}
-
-
-
+    - name: Change default shell to /bin/bash for user {{ username }}
+      ansible.builtin.user:
+        name: "{{ username }}"
+        shell: /bin/bash
 
   ########################################################################################################
 
