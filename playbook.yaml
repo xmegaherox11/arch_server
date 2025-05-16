@@ -628,3 +628,7 @@
             - {{home_ip}}
             - {{public_ip.json.ip}}
             - 172.17.0.0/24
+
+
+
+docker run cloudflare/cloudflared:latest tunnel --no-autoupdate run --token eyJhIjoiM2RmNGI4YjkxMmE0YmVjNGM5NzhmMjJiODc3ZGM3YWEiLCJ0IjoiODY0NTM5YWUtNzIxMi00MzJiLTgyYTctOTFiMjNiN2RiNDVhIiwicyI6Ill6bGxZMlppTlRBdFpqbGpOaTAwT1dGaExUaG1OVFF0T0daaFlUSXhNRFE1T1dFeCJ9
