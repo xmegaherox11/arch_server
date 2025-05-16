@@ -449,8 +449,8 @@
         EULA: "TRUE"
         TYPE: "PAPER"
         PAPER_CHANNEL: "experimental"
-        ONLINE_MODE: "false"
-        MEMORY: "4G"
+        ONLINE_MODE: "true"
+        MEMORY: "8G"
        restart_policy: always
        
     - name: Installing Palworld
