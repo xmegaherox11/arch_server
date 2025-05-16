@@ -6,6 +6,9 @@
     password: ""
     pia_username: ""
     email: ""
+    google_client: ""
+    google_key: ""
+    cloudflare_api: ""
     
     base_ip: "192.168.1"
     gateway_ip: "{{base_ip}}.1"
@@ -628,3 +631,13 @@
             - {{home_ip}}
             - {{public_ip.json.ip}}
             - 172.17.0.0/24
+
+    - name: Run Cloudflare Tunnel container
+      community.docker.docker_container:
+        name: cloudflared-tunnel
+        image: cloudflare/cloudflared:latest
+        command: "tunnel --no-autoupdate run --token {{cloudflare_api}}"
+        restart_policy: always
+        detach: true
+
+            
