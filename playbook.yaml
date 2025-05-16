@@ -365,6 +365,21 @@ sudo chsh -s /bin/bash {{username}}
           - "{{nvme_container_path}}/homeassistant:/config"
           - "{{nvme_container_path}}/homeassistant/.ssh:/root/.ssh"
         restart_policy: always
+        
+    - name: Run Matter Server container
+      community.docker.docker_container:
+        name: matter-server
+        image: ghcr.io/home-assistant-libs/python-matter-server:stable
+        privileged: "true"
+        network_mode: "host"
+        security_opts:
+          - "apparmor=unconfined"
+        volumes:
+          - "{{nvme_container_path}}/matter:/data:rw"
+          - "/run/dbus:/run/dbus:ro"
+        env: "{{common_env}}"
+        restart_policy: always
+
   
     - name: Installing Nginx-Proxy-Manager
       community.docker.docker_container:
