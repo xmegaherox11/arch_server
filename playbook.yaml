@@ -247,7 +247,7 @@
         - "{{hdd_movie_path}}:/data/movies"
         - "{{hdd_anime_path}}:/data/anime"
         - "{{ssd_music_path}}:/data/music"
-      ports:
+       ports:
          - 8999:8989
        env: "{{common_env}}"
        devices:
